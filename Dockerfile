@@ -13,6 +13,8 @@ ENV PYTHONUNBUFFERED=1
 # set terraform automation flag
 ENV TF_IN_AUTOMATION=true
 
+ENV FLASK_APP=1
+
 # install required packages
 RUN apk add --no-cache libffi-dev
 
