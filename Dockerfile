@@ -1,5 +1,5 @@
 # pull upstream terraform image
-FROM hashicorp/terraform:1.5.3 AS terraform
+FROM hashicorp/terraform:1.5.3 AS terraform1.5.3
 
 # it's offical so i'm using it + alpine so damn small
 FROM python:3.9.5-alpine3.12
@@ -23,7 +23,7 @@ COPY --from=terraform /bin/terraform /usr/local/bin/terraform
 COPY config/config.py /etc/gunicorn/config.py
 
 COPY requirements.txt /www/requirements.txt
-RUN pip install --no-cache-dir -r /www/requirements.txt
+RUN pip3 install --no-cache-dir -r /www/requirements.txt
 
 # copy the codebase
 COPY . /www
