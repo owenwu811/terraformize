@@ -6,9 +6,7 @@ from flask_httpauth import HTTPBasicAuth, HTTPTokenAuth, MultiAuth
 from typing import Optional, Tuple
 from threading import Thread
 
-
 API_VERSION = "v1"
-
 
 app = Flask(__name__)
 basic_auth = HTTPBasicAuth(realm='terraformize')
@@ -41,6 +39,10 @@ def long_running_task(**kwargs):
         terraform_return_code, terraform_stdout, terraform_stderr = terraform_object.plan(
             variables, configuration["parallelism"]
         )
+    elif command == "validate":
+        terraform_return_code, terraform_stdout, terraform_stderr = terraform_object.validate(
+            variables, configuration["parallelism"]
+        )
     elif command == "apply":
         terraform_return_code, terraform_stdout, terraform_stderr = terraform_object.apply(
             variables, configuration["parallelism"]
@@ -51,7 +53,6 @@ def long_running_task(**kwargs):
         )
     send_webhook_result(webhook_url, terraform_object.init_stdout, terraform_object.init_stderr, terraform_stdout,
                         terraform_stderr, terraform_return_code, terraform_request_uuid)
-
 
 def terraform_return_code_to_http_code(terraform_return_code: int, plan_mode=False) -> int:
     """
@@ -160,6 +161,60 @@ def plan_terraform(module_path: str, workspace_name: str) -> Tuple[str, int]:
         else:
             terraform_request_uuid, terraform_request_uuid_json = create_request_uuid()
             thread = Thread(target=long_running_task, kwargs={'command': "plan",
+                                                              'variables': request.get_json(silent=True),
+                                                              'workspace_name': workspace_name,
+                                                              'module_path': module_path,
+                                                              'terraform_request_uuid': terraform_request_uuid,
+                                                              'webhook_url': webhook})
+            thread.start()
+            return terraform_request_uuid_json, 202
+
+    except FileNotFoundError as error_log:
+        return jsonify({"error": str(error_log)}), 404
+
+#working on validate endpoint 
+@app.route('/' + API_VERSION + '/<module_path>/<workspace_name>/validate', methods=["POST"])
+@multi_auth.login_required
+def validate_terraform(module_path: str, workspace_name: str) -> Tuple[str, int]:
+    """
+    A REST endpoint to plan terraform modules at a given module path inside the main module directory path at a given
+    workspace, if the "webhook" is set to a URL the function will work in a threaded format and return only the request
+    UUID then will return the full request response once that completes in a non blocking format
+
+    Arguments:
+        :param module_path:  the name of the subdirectory for the module inside the "terraform_modules_path" to run
+        "terraform plan" at
+        :param workspace_name: the name of the workspace to run "terraform plan" at
+
+    Returns:
+        :return return_body: a JSON of the terraform exit code, stdout & stderr from the terraform run, if a arg of
+        "webhook" is  passed will only return the UUID of the request
+        :return terraform_return_code: the terraform return code
+
+    Exceptions:
+        :except FileNotFoundError: will return HTTP 404 with a JSON of the stderr it catch from "terraform init" or
+        "terraform plan"
+    """
+    try:
+        webhook = request.args.get('webhook', None)
+        if webhook is None:
+            terraform_object = Terraformize(workspace_name, configuration["terraform_modules_path"] + "/" + module_path,
+                                            terraform_bin_path=configuration["terraform_binary_path"])
+            terraform_return_code, terraform_stdout, terraform_stderr = terraform_object.validate(
+                request.get_json(silent=True), configuration["parallelism"]
+            )
+            return_body = jsonify({
+                "init_stdout": terraform_object.init_stdout,
+                "init_stderr": terraform_object.init_stderr,
+                "stdout": terraform_stdout,
+                "stderr": terraform_stderr,
+                "exit_code": terraform_return_code
+            })
+            terraform_return_code = terraform_return_code_to_http_code(int(terraform_return_code))
+            return return_body, terraform_return_code
+        else:
+            terraform_request_uuid, terraform_request_uuid_json = create_request_uuid()
+            thread = Thread(target=long_running_task, kwargs={'command': "validate",
                                                               'variables': request.get_json(silent=True),
                                                               'workspace_name': workspace_name,
                                                               'module_path': module_path,
@@ -285,3 +340,4 @@ def health_check() -> Tuple[str, int]:
 
     """
     return jsonify({"healthy": True}), 200
+
